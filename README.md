@@ -75,8 +75,8 @@ disclaimer.
 ## Building & running
 
 ```
-git clone https://github.com/Ixars/ransomdoors
-cd rans0m
+git clone https://github.com/KMT-Studios/ransomdoors
+cd ransomdoors
 dotnet build
 dotnet run
 ```
