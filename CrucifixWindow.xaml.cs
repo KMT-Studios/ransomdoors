@@ -19,9 +19,9 @@ namespace rans0m
         {
             Global.HideSystemMenu(this);
 
-            Global.RansomPayed?.Invoke();
+            Global.State.RansomPayed?.Invoke();
 
-            _sound = SoundHandle.Create(Global.GetResourceSteam("Sounds/crucifix.wav"));
+            _sound = SoundHelper.Create(Global.GetResourceStream("Sounds/crucifix.wav"));
             _sound.Play();
 
             _ = CloseAfterFallbackDelayAsync();

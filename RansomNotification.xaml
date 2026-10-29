@@ -5,7 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:rans0m"
         mc:Ignorable="d"
-        Title="RANS0M" Height="400" Width="560" Background="#FFF82B1C" ResizeMode="NoResize" ShowInTaskbar="False" Topmost="True" AllowDrop="True" Loaded="Window_Loaded" DragEnter="Window_DragEnter" Drop="Window_Drop">
+        Title="RANS0M" Height="400" Width="560" Background="#FFF82B1C" ResizeMode="NoResize" ShowInTaskbar="False" Topmost="True" AllowDrop="True" Loaded="Window_Loaded" Closing="OnClosing" DragEnter="Window_DragEnter" Drop="Window_Drop">
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition/>

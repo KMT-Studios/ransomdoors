@@ -6,10 +6,10 @@
         xmlns:local="clr-namespace:rans0m"
         xmlns:gif="https://github.com/XamlAnimatedGif/XamlAnimatedGif" x:Class="rans0m.Overlay"
         mc:Ignorable="d"
-        Title="RANS0M" ShowInTaskbar="False" IsTabStop="False" Topmost="True" ResizeMode="NoResize"
-        WindowState="Maximized"
+        Title="RANS0M" Height="450" Width="800" ShowInTaskbar="False" IsTabStop="False" Topmost="True" ResizeMode="NoResize" WindowStartupLocation="CenterScreen"
         WindowStyle="None"
-        Background="Transparent" Loaded="Window_Loaded" AllowsTransparency="True"
+        AllowsTransparency="True"
+        Background="Transparent" Loaded="Window_Loaded"
 >
 
     <Grid x:Name="grid">
@@ -17,12 +17,12 @@
             <RowDefinition Height="0*"/>
             <RowDefinition/>
         </Grid.RowDefinitions>
-        <Image x:Name="staticBg" Stretch="Fill" Grid.Row="1" gif:AnimationBehavior.SourceUri="/Assets/static.gif" gif:AnimationBehavior.AutoStart="True" Opacity="0.1"/>
+        <Image x:Name="staticBg" Stretch="Fill" Grid.Row="1" gif:AnimationBehavior.SourceUri="/Assets/static.gif" gif:AnimationBehavior.AutoStart="False" Opacity="0.1"/>
         <Image x:Name="img_idle" Height="192" Width="192" Source="/Assets/ransom_idle.png" Grid.Row="1" HorizontalAlignment="Left" VerticalAlignment="Top" Panel.ZIndex="1"/>
 
         <Image x:Name="img_stopsign" Height="192" HorizontalAlignment="Center" VerticalAlignment="Center" Width="192" Source="/Assets/stop_sign.png" Grid.Row="1" Panel.ZIndex="1"/>
-        <Image x:Name="img_attack" HorizontalAlignment="Left" Height="900" VerticalAlignment="Top" Width="900" Source="/Assets/ransom_attack.png" Grid.Row="1" Panel.ZIndex="1" gif:AnimationBehavior.SourceUri="/Assets/ransom_attack.gif"/>
-        <Image x:Name="redVignette" Grid.Row="1" Panel.ZIndex="1" Stretch="Fill" gif:AnimationBehavior.SourceUri="/Assets/red_vignette.gif"/>
+        <Image x:Name="img_attack" HorizontalAlignment="Left" Height="900" VerticalAlignment="Top" Width="900" Source="/Assets/ransom_attack.png" Grid.Row="1" Panel.ZIndex="1" gif:AnimationBehavior.SourceUri="/Assets/ransom_attack.gif" gif:AnimationBehavior.AutoStart="False"/>
+        <Image x:Name="redVignette" Grid.Row="1" Panel.ZIndex="1" Stretch="Fill" gif:AnimationBehavior.SourceUri="/Assets/red_vignette.gif" gif:AnimationBehavior.AutoStart="False"/>
 
         <Viewbox x:Name="vb_download" Width="668" Height="88" Panel.ZIndex="1" HorizontalAlignment="Center" VerticalAlignment="Center" Grid.RowSpan="2" Stretch="Uniform" StretchDirection="Both">
             <Grid Width="668" Height="88">

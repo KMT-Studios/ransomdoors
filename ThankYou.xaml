@@ -5,7 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:rans0m"
         mc:Ignorable="d"
-        Title="RANS0M" Height="350" Width="560" ResizeMode="NoResize" Topmost="True" Loaded="Window_Loaded" ShowInTaskbar="False" Background="Black">
+        Title="RANS0M" Height="350" Width="560" ResizeMode="NoResize" Topmost="True" Loaded="Window_Loaded" Closing="OnClosing" ShowInTaskbar="False" Background="Black">
     <Viewbox Stretch="UniformToFill">
         <Grid x:Name="grid" Width="560" Height="350">
             <Grid.Background>

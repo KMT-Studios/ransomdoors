@@ -1,0 +1,29 @@
+# Build output
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Runtime settings. This file lives next to the executable and, when the Twitch
+# integration is used, contains the client secret plus the user access and
+# refresh tokens in plaintext. It is effectively a password: never commit it.
+config.json
+config.json.tmp
+
+# Secrets, just in case one ever ends up in a file that is tracked
+*.env
+.env
+*.secret
+secrets.json
+
+# Publish profiles keep a local machine path and a publish history
+Properties/PublishProfiles/*.pubxml.user
+
+# OS cruft
+Thumbs.db
+Desktop.ini
+.DS_Store

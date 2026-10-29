@@ -1,0 +1,24 @@
+{
+  "SpawnAutomatically": true,
+  "MinSpawnDelay": 5,
+  "MaxSpawnDelay": 600,
+  "InfectionDuration": 90,
+  "CrashOnDeath": false,
+  "ExecCMDOnDeath": false,
+  "CMDOnDeath": "shutdown /s /t 0",
+  "UseDrawerMode": false,
+  "RansomAmount": 500,
+  "Twitch": {
+    "Enabled": false,
+    "Channel": "",
+    "ClientId": "",
+    "ClientSecret": "",
+    "RedirectUri": "http://localhost:3000/",
+    "TokenClientId": "",
+    "UserAccessToken": "",
+    "RefreshToken": "",
+    "TriggerRewardId": "",
+    "ForceRewardId": "",
+    "DismissRewardId": ""
+  }
+}

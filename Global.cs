@@ -1,260 +1,171 @@
 ﻿using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
-using System.Windows.Forms;
 using System.Windows.Interop;
+using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Resources;
 using WpfApplication = System.Windows.Application;
 
-namespace rans0m
+namespace rans0m;
+
+/// <summary>
+/// Holds the app-wide singletons and the small geometry/native helpers that have no state
+/// of their own.
+/// </summary>
+public static class Global
 {
-    public class Global
+    /// <summary>Shared RNG. Use <see cref="Rng"/> rather than a bare <see cref="Random"/>.</summary>
+    public static Rng Rng { get; } = new();
+
+    /// <summary>State for the current ransom encounter.</summary>
+    public static RansomState State { get; } = new();
+
+    /// <summary>The fullscreen click-through overlay, once it has been constructed.</summary>
+    public static Overlay? OverlayWindow { get; internal set; }
+
+    public static System.Drawing.Rectangle ScreenBounds =>
+        System.Windows.Forms.Screen.PrimaryScreen?.WorkingArea ?? System.Drawing.Rectangle.Empty;
+
+    // ----------------- Geometry helpers -----------------
+
+    public static double Lerp(double a, double b, double t) => a + (b - a) * t;
+
+    public static Thickness CombineThickness(Thickness a, Thickness b)
     {
-        public static Overlay? overlayWindow;
-        // Titles used by the pop up windows
-        public static readonly List<string> tauntTitles = new() {
-            "RANS0M",
-            "MOSNAR",
-            "RANSOM",
-            "M0NARS",
-            "YOU ARE AN IDIOT",
-            "Untitled",
-            "Untitled (3)",
-            "I FOUND YOU",
-            "RANSOM.exe",
-            "RAANNNSSSSOOOOOMMMMMM",
-            "times up",
-            "GIVE MONEY",
-            "ERROR",
-            "DHAUFGH",
-            "_________",
-            "IMG.JPG"
-        };
+        return new Thickness(a.Left + b.Left, a.Top + b.Top, a.Right + b.Right, a.Bottom + b.Bottom);
+    }
 
-        // Images used by the pop up windows
-        private static List<BitmapImage> _tauntImages;
-        public static List<BitmapImage> tauntImages
+    /// <summary>
+    /// Moves a window to a random position, clamped so it stays fully on screen even when it
+    /// is larger than the working area.
+    /// </summary>
+    public static void RandomPosWindow(Window window)
+    {
+        System.Drawing.Rectangle bounds = ScreenBounds;
+        int x = Rng.Next(0, Math.Max(1, bounds.Width - (int)window.ActualWidth));
+        int y = Rng.Next(0, Math.Max(1, bounds.Height - (int)window.ActualHeight));
+
+        window.Left = x;
+        window.Top = y;
+    }
+
+    /// <summary>
+    /// Offsets a control to a random position. The right/bottom margins stay zero so the
+    /// element is sized by the layout and only shifted by the margin.
+    /// </summary>
+    public static void RandomPosControl(FrameworkElement element)
+    {
+        System.Drawing.Rectangle bounds = ScreenBounds;
+        int x = Rng.Next(0, Math.Max(1, bounds.Width - (int)element.ActualWidth));
+        int y = Rng.Next(0, Math.Max(1, bounds.Height - (int)element.ActualHeight));
+
+        element.Margin = new Thickness(x, y, 0, 0);
+    }
+
+    public static void CenterControl(FrameworkElement element)
+    {
+        System.Drawing.Rectangle bounds = ScreenBounds;
+        element.Margin = new Thickness(
+            (bounds.Width / 2) - element.ActualWidth / 2,
+            (bounds.Height / 2) - element.ActualHeight / 2,
+            0, 0);
+    }
+
+    public static void CenterWindow(Window window)
+    {
+        System.Drawing.Rectangle bounds = ScreenBounds;
+        window.Left = (bounds.Width / 2) - window.ActualWidth / 2;
+        window.Top = (bounds.Height / 2) - window.ActualHeight / 2;
+    }
+
+    // ----------------- Resource helpers -----------------
+
+    /// <summary>Reads a file out of the embedded <c>Assets</c> resource tree.</summary>
+    public static Stream GetResourceStream(string relativePath)
+    {
+        StreamResourceInfo info = WpfApplication.GetResourceStream(
+            new Uri($"pack://application:,,,/Assets/{relativePath}"));
+
+        return info.Stream;
+    }
+
+    /// <summary>Reads a file out of the embedded <c>Assets</c> resource tree into a byte array.</summary>
+    public static byte[] GetBytesFromResource(string relativePath)
+    {
+        using Stream stream = GetResourceStream(relativePath);
+
+        // CopyTo rather than Stream.Read: a single Read is permitted to return fewer bytes
+        // than requested, which silently truncated these buffers.
+        using MemoryStream buffer = new();
+        stream.CopyTo(buffer);
+        return buffer.ToArray();
+    }
+
+    public static BitmapImage LoadBitmapImage(string uri)
+    {
+        BitmapImage bitmap = new();
+        bitmap.BeginInit();
+        bitmap.UriSource = new Uri(uri);
+        bitmap.CacheOption = BitmapCacheOption.OnLoad;
+        bitmap.EndInit();
+
+        // Freeze so it can be handed to other threads without marshalling back to the UI one.
+        bitmap.Freeze();
+        return bitmap;
+    }
+
+    // ----------------- Native window helpers -----------------
+
+    private const int GWL_STYLE = -16;
+    private const int WS_SYSMENU = 0x80000;
+
+    /// <summary>
+    /// Removes the system menu so a window cannot be moved or closed with Alt+Space.
+    /// </summary>
+    public static void HideSystemMenu(Window window)
+    {
+        IntPtr hwnd = new WindowInteropHelper(window).Handle;
+        int style = GetWindowLong(hwnd, GWL_STYLE);
+        SetWindowLong(hwnd, GWL_STYLE, style & ~WS_SYSMENU);
+    }
+
+    /// <summary>
+    /// Reads a window style or extended style. Uses the pointer-sized P/Invoke on 64-bit
+    /// processes, since <c>GetWindowLong</c> truncates the value there.
+    /// </summary>
+    public static int GetWindowLong(IntPtr hwnd, int index)
+    {
+        return nint.Size == 8
+            ? (int)(long)GetWindowLongPtr(hwnd, index)
+            : GetWindowLong32(hwnd, index);
+    }
+
+    /// <summary>
+    /// Writes a window style or extended style. Uses the pointer-sized P/Invoke on 64-bit
+    /// processes to match <see cref="GetWindowLong"/>.
+    /// </summary>
+    public static void SetWindowLong(IntPtr hwnd, int index, int newStyle)
+    {
+        if (nint.Size == 8)
         {
-            get
-            {
-                if (_tauntImages == null)
-                {
-                    _tauntImages = new()
-                    {
-                        LoadBitmapImage("pack://application:,,,/Assets/Taunts/glitch1.jpg"),
-                        LoadBitmapImage("pack://application:,,,/Assets/Taunts/glitch2.jpeg"),
-                        LoadBitmapImage("pack://application:,,,/Assets/Taunts/glitch3.jpg"),
-                        LoadBitmapImage("pack://application:,,,/Assets/Taunts/glitch4.jpg"),
-                        LoadBitmapImage("pack://application:,,,/Assets/Taunts/glitch5.jpg"),
-                        LoadBitmapImage("pack://application:,,,/Assets/Taunts/idiot.png"),
-                        LoadBitmapImage("pack://application:,,,/Assets/Taunts/tauntface.png"),
-                        LoadBitmapImage("pack://application:,,,/Assets/Taunts/tauntflower.png"),
-                    };
-                }
-                return _tauntImages;
-            }
+            SetWindowLongPtr(hwnd, index, new IntPtr(newStyle));
         }
-
-
-
-
-
-        // ----------------- GLOBAL VARIABLES -----------------
-
-        public static int ransomLeft = 0; // Cash to pay
-        public static int ransomTimeLeft = 0; // 3rd phase countdown
-        public static bool underRansom = false;
-        public static Action? RansomPayed;
-        public static List<string> usedCoins = new(); // this is to avoid people from copy pasting coins, not that secure tho
-
-        public static bool crucifixUsed = false;
-        public static bool canAttack = true;
-        public static System.Drawing.Point lastRegisteredMousePos;
-        public static bool spyingMouse = false;
-
-        public static Random rng = new Random();
-
-        /// <summary>
-        /// Size of the overlay in DIPs. Falls back to the primary work area (also DIPs)
-        /// if the overlay isn't laid out yet, so callers never mix pixel and DIP units.
-        /// </summary>
-        public static (double Width, double Height) OverlaySizeDips()
+        else
         {
-            Overlay? o = overlayWindow;
-            if (o == null || o.ActualWidth <= 0 || o.ActualHeight <= 0)
-            {
-                return (SystemParameters.WorkArea.Width, SystemParameters.WorkArea.Height);
-            }
-            return (o.ActualWidth, o.ActualHeight);
-        }
-
-        private static double ElementWidth(FrameworkElement e) => e.ActualWidth > 0 ? e.ActualWidth : e.Width;
-        private static double ElementHeight(FrameworkElement e) => e.ActualHeight > 0 ? e.ActualHeight : e.Height;
-
-
-
-
-
-        // ---------------------- PUBLIC METHODS ----------------------
-
-        public static double Lerp(double a, double b, double t)
-        {
-            return a + (b - a) * t;
-        }
-
-        private static BitmapImage LoadBitmapImage(string uri)
-        {
-            BitmapImage bitmap = new BitmapImage();
-            bitmap.BeginInit();
-            bitmap.UriSource = new Uri(uri);
-            bitmap.CacheOption = BitmapCacheOption.OnLoad;
-            bitmap.EndInit();
-            bitmap.Freeze();
-            return bitmap;
-        }
-
-        static public byte[] GetBytesFromResource(string uri)
-        {
-            System.Windows.Resources.StreamResourceInfo streamInfo = WpfApplication.GetResourceStream(new Uri($"pack://application:,,,/Assets/{uri}"));
-            byte[] bytes = new byte[streamInfo.Stream.Length];
-            streamInfo.Stream.Read(bytes, 0, (int)streamInfo.Stream.Length);
-
-            return bytes;
-        }
-
-        static public Stream GetResourceSteam(string uri)
-        {
-            return WpfApplication.GetResourceStream(new Uri($"pack://application:,,,/Assets/{uri}")).Stream;
-        }
-
-        static public Thickness CombineThickness(Thickness a, Thickness b)
-        {
-            return new Thickness(a.Left + b.Left, a.Top + b.Top, a.Right + b.Right, a.Bottom + b.Bottom);
-        }
-
-        public static void KeyPressed(Keys key)
-        {
-            if (spyingMouse)
-            {
-                lastRegisteredMousePos = new System.Drawing.Point(-1, -1); // Invalidate the last registered mouse position if a key is pressed during the spy phase so it also triggers the ransom
-            }
-        }
-
-        /// <summary>
-        /// Randomly positions a window within the overlay's DIP bounds.
-        /// </summary>
-        public static void RandomPosWindow(Window window)
-        {
-            var (w, h) = OverlaySizeDips();
-
-            int maxX = (int)Math.Max(0, w - ElementWidth(window));
-            int maxY = (int)Math.Max(0, h - ElementHeight(window));
-
-            window.Left = rng.Next(0, Math.Max(1, maxX));
-            window.Top = rng.Next(0, Math.Max(1, maxY));
-        }
-
-        /// <summary>
-        /// Randomly positions a control within the overlay's DIP bounds.
-        /// </summary>
-        public static void RandomPosControl(FrameworkElement element)
-        {
-            var (w, h) = OverlaySizeDips();
-
-            int maxX = (int)Math.Max(0, w - ElementWidth(element));
-            int maxY = (int)Math.Max(0, h - ElementHeight(element));
-
-            int x = rng.Next(0, Math.Max(1, maxX));
-            int y = rng.Next(0, Math.Max(1, maxY));
-
-            element.Margin = new Thickness(x, y, 0, 0);
-        }
-
-        /// <summary>
-        /// Centers a control within the overlay's DIP bounds.
-        /// </summary>
-        public static void CenterControl(FrameworkElement element)
-        {
-            var (w, h) = OverlaySizeDips();
-
-            double x = (w - ElementWidth(element)) / 2;
-            double y = (h - ElementHeight(element)) / 2;
-
-            element.Margin = new Thickness(x, y, 0, 0);
-        }
-
-        /// <summary>
-        /// Centers a window within the overlay's DIP bounds.
-        /// </summary>
-        public static void CenterWindow(Window window)
-        {
-            var (w, h) = OverlaySizeDips();
-
-            window.Left = (w - ElementWidth(window)) / 2;
-            window.Top = (h - ElementHeight(window)) / 2;
-        }
-
-        /// <summary>
-        /// Cool glitch idle animation, used for the ransom pop ups
-        /// </summary>
-        public static async void GlitchIdle(Window control, bool divideAndTaunt = false)
-        {
-            (double x, double y) = await control.Dispatcher.InvokeAsync(() =>
-                (control.Left, control.Top));
-
-            while (true)
-            {
-                await Task.Delay(200);
-                try
-                {
-                    if (!Global.underRansom)
-                    {
-                        await control.Dispatcher.InvokeAsync(() =>
-                        {
-                            control.Close();
-                        });
-                        break;
-                    }
-
-                    await control.Dispatcher.InvokeAsync(() =>
-                    {
-                        if (divideAndTaunt)
-                        {
-                            if (Global.rng.Next(1, 100) <= 2)
-                            {
-                                var (w, h) = OverlaySizeDips();
-                                x = Global.rng.Next(0, (int)Math.Max(1, w - ElementWidth(control)));
-                                y = Global.rng.Next(0, (int)Math.Max(1, h - ElementHeight(control)));
-                                TauntWindow tauntWindow = new TauntWindow();
-                                tauntWindow.Show();
-                            }
-                        }
-
-                        control.Left = x + Global.rng.Next(-5, 5);
-                        control.Top = y + Global.rng.Next(-5, 5);
-                    });
-                }
-                catch
-                {
-                    break;
-                }
-            }
-        }
-
-        [DllImport("user32.dll")]
-        private static extern int GetWindowLong(IntPtr hwnd, int index);
-
-        [DllImport("user32.dll")]
-        private static extern int SetWindowLong(IntPtr hwnd, int index, int newStyle);
-
-        private const int GWL_STYLE = -16;
-        private const int WS_SYSMENU = 0x80000;
-
-        public static void HideSystemMenu(Window window)
-        {
-            IntPtr hwnd = new WindowInteropHelper(window).Handle;
-            int style = GetWindowLong(hwnd, GWL_STYLE);
-            SetWindowLong(hwnd, GWL_STYLE, style & ~WS_SYSMENU);
+            SetWindowLong32(hwnd, index, newStyle);
         }
     }
+
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongW")]
+    private static extern int GetWindowLong32(IntPtr hWnd, int nIndex);
+
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongW")]
+    private static extern int SetWindowLong32(IntPtr hWnd, int nIndex, int dwNewLong);
+
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
+    private static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
+
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
+    private static extern IntPtr SetWindowLongPtr(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
 }

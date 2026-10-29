@@ -1,186 +1,136 @@
 ﻿using System.IO;
-using System.Reflection;
 using System.Text.Json;
 
-[AttributeUsage(AttributeTargets.Property)]
-public class ConfigField : Attribute
-{
-    public object DefaultValue { get; }
+namespace rans0m;
 
-    public ConfigField(object defaultValue)
+/// <summary>
+/// Strongly typed view over the user's settings.
+/// </summary>
+/// <remarks>
+/// The previous implementation reflected over the static properties of the <c>Config</c> class,
+/// kept the raw JSON in a <c>Dictionary&lt;string, object&gt;</c>, and re-parsed a
+/// <see cref="JsonElement"/> on every single property read. Because <c>Dictionary&lt;string,
+/// object&gt;</c> does not round-trip cleanly, a value set in memory could serialize back out
+/// as a different JSON type than it went in as. Binding straight to this record makes that
+/// class of bug unrepresentable, and keeps <c>config.json</c> byte-compatible.
+/// </remarks>
+public sealed class AppConfig
+{
+    public bool SpawnAutomatically { get; set; } = true;
+
+    public int MinSpawnDelay { get; set; } = 5;
+
+    public int MaxSpawnDelay { get; set; } = 600;
+
+    public int InfectionDuration { get; set; } = 90;
+
+    public bool CrashOnDeath { get; set; }
+
+    public bool ExecCMDOnDeath { get; set; }
+
+    public string CMDOnDeath { get; set; } = "shutdown /s /t 0";
+
+    public bool UseDrawerMode { get; set; }
+
+    public int RansomAmount { get; set; } = 500;
+
+    private TwitchSettings? _twitch;
+
+    /// <summary>
+    /// Twitch channel point integration. Never null, so callers can read it without checking even
+    /// when an older <c>config.json</c> has no <c>Twitch</c> key at all.
+    /// </summary>
+    public TwitchSettings Twitch
     {
-        DefaultValue = defaultValue;
+        get => _twitch ??= new TwitchSettings();
+        set => _twitch = value ?? new TwitchSettings();
+    }
+
+    /// <summary>
+    /// Clamps values that would otherwise produce an unplayable or unsafe state, such as a
+    /// zero-length infection duration or a ransom of zero.
+    /// </summary>
+    public void ClampToSaneRanges()
+    {
+        MinSpawnDelay = Math.Clamp(MinSpawnDelay, 0, 86400);
+        MaxSpawnDelay = Math.Clamp(MaxSpawnDelay, 0, 86400);
+        InfectionDuration = Math.Clamp(InfectionDuration, 5, 86400);
+        RansomAmount = Math.Clamp(RansomAmount, 1, 1_000_000);
+
+        CMDOnDeath ??= string.Empty;
+
+        Twitch.ClampToSaneRanges();
     }
 }
 
+/// <summary>
+/// Loads and saves <see cref="AppConfig"/> to <c>config.json</c> next to the executable.
+/// </summary>
 public static class Config
 {
-    private static Dictionary<string, object> _cache = new();
-
-    private static string GetConfigPath()
+    private static readonly JsonSerializerOptions SerializerOptions = new()
     {
-        return Path.Combine(AppContext.BaseDirectory, "ransomconfig.json");
-    }
+        WriteIndented = true,
+        PropertyNameCaseInsensitive = true,
+    };
 
-    public static bool ConfigExists()
-    {
-        return File.Exists(GetConfigPath());
-    }
+    private static AppConfig _current = new();
 
+    /// <summary>The active configuration. Safe to read from any thread once loaded.</summary>
+    public static AppConfig Current => _current;
+
+    public static string ConfigPath => Path.Combine(AppContext.BaseDirectory, "config.json");
+
+    public static bool ConfigExists() => File.Exists(ConfigPath);
+
+    /// <summary>
+    /// Loads the config file, returning false if it is missing or unreadable so the caller can
+    /// fall back to first-run behavior.
+    /// </summary>
     public static bool LoadConfig()
     {
-        if (ConfigExists())
+        if (!ConfigExists())
         {
-            try
-            {
-                string json = File.ReadAllText(GetConfigPath());
-                _cache = JsonSerializer.Deserialize<Dictionary<string, object>>(json) ?? new();
-                return true;
-            }
-            catch { }
-        }
-        return false;
-    }
-
-    private static T GetOrDefault<T>(string propertyName)
-    {
-        if (_cache.TryGetValue(propertyName, out object? value))
-        {
-            try
-            {
-                if (value is JsonElement element)
-                    return ConvertJsonElement<T>(element);
-
-                return (T)Convert.ChangeType(value, typeof(T));
-            }
-            catch { }
+            return false;
         }
 
-        PropertyInfo prop = typeof(Config).GetProperty(propertyName, BindingFlags.Public | BindingFlags.Static);
-        ConfigField attr = prop?.GetCustomAttribute<ConfigField>();
+        try
+        {
+            string json = File.ReadAllText(ConfigPath);
+            AppConfig? loaded = JsonSerializer.Deserialize<AppConfig>(json, SerializerOptions);
+            if (loaded is null)
+            {
+                return false;
+            }
 
-        if (attr != null)
-            return (T)Convert.ChangeType(attr.DefaultValue, typeof(T));
-
-        throw new KeyNotFoundException($"Config key '{propertyName}' not found");
+            loaded.ClampToSaneRanges();
+            _current = loaded;
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+        catch (IOException)
+        {
+            return false;
+        }
     }
 
-    // Dictionary<string,object> values deserialize as JsonElement, not the raw type
-    private static T ConvertJsonElement<T>(JsonElement element)
-    {
-        return element.Deserialize<T>();
-    }
-
+    /// <summary>Writes the active configuration back to disk.</summary>
     public static void SaveConfig()
     {
-        Dictionary<string, object> configToSave = new Dictionary<string, object>();
+        _current.ClampToSaneRanges();
 
-        PropertyInfo[] properties = typeof(Config).GetProperties(
-            BindingFlags.Public | BindingFlags.Static);
+        // Write to a temp file first so a crash mid-write cannot leave a truncated config
+        // that fails to parse on the next launch.
+        string tempPath = ConfigPath + ".tmp";
 
-        foreach (PropertyInfo prop in properties)
+        using (FileStream stream = File.Create(tempPath))
         {
-            ConfigField attr = prop.GetCustomAttribute<ConfigField>();
-            if (attr != null)
-            {
-                object value = _cache.ContainsKey(prop.Name) ? _cache[prop.Name] : attr.DefaultValue;
-                configToSave[prop.Name] = value;
-            }
+            JsonSerializer.Serialize(stream, _current, SerializerOptions);
         }
 
-        string json = JsonSerializer.Serialize(configToSave, new JsonSerializerOptions { WriteIndented = true });
-        File.WriteAllText(GetConfigPath(), json);
-        _cache = configToSave;
-    }
-
-
-    // Config properties with automatic setter
-    // ------------------- Behavior ----------------------
-    [ConfigField(true)]
-    public static bool SpawnAutomatically
-    {
-        get => GetOrDefault<bool>(nameof(SpawnAutomatically));
-        set { _cache[nameof(SpawnAutomatically)] = value; }
-    }
-
-    [ConfigField(false)]
-    public static bool a90Mode
-    {
-        get => GetOrDefault<bool>(nameof(a90Mode));
-        set { _cache[nameof(a90Mode)] = value; }
-    }
-
-    [ConfigField(5)]
-    public static int MinSpawnDelay
-    {
-        get => GetOrDefault<int>(nameof(MinSpawnDelay));
-        set { _cache[nameof(MinSpawnDelay)] = value; }
-    }
-
-    [ConfigField(600)]
-    public static int MaxSpawnDelay
-    {
-        get => GetOrDefault<int>(nameof(MaxSpawnDelay));
-        set { _cache[nameof(MaxSpawnDelay)] = value; }
-    }
-
-    [ConfigField(90)]
-    public static int InfectionDuration
-    {
-        get => GetOrDefault<int>(nameof(InfectionDuration));
-        set { _cache[nameof(InfectionDuration)] = value; }
-    }
-
-    // ------------------- Death -------------------
-
-    [ConfigField(false)]
-    public static bool CrashOnDeath
-    {
-        get => GetOrDefault<bool>(nameof(CrashOnDeath));
-        set { _cache[nameof(CrashOnDeath)] = value; }
-    }
-
-    [ConfigField(false)]
-    public static bool ExecCMDOnDeath
-    {
-        get => GetOrDefault<bool>(nameof(ExecCMDOnDeath));
-        set { _cache[nameof(ExecCMDOnDeath)] = value; }
-    }
-
-    [ConfigField("shutdown /s /t 0")]
-    public static string CMDOnDeath
-    {
-        get => GetOrDefault<string>(nameof(CMDOnDeath));
-        set { _cache[nameof(CMDOnDeath)] = value; }
-    }
-
-    // ------------------ Items -------------------
-
-    [ConfigField(false)]
-    public static bool UseDrawerMode
-    {
-        get => GetOrDefault<bool>(nameof(UseDrawerMode));
-        set { _cache[nameof(UseDrawerMode)] = value; }
-    }
-
-    [ConfigField(500)]
-    public static int RansomAmount // Gold needed to pay the ransom
-    {
-        get => GetOrDefault<int>(nameof(RansomAmount));
-        set { _cache[nameof(RansomAmount)] = value; }
-    }
-
-    [ConfigField(10)]
-    public static int CrucChance
-    {
-        get => GetOrDefault<int>(nameof(CrucChance));
-        set { _cache[nameof(CrucChance)] = value; }
-    }
-
-    [ConfigField(25)]
-    public static int HoneypotChance
-    {
-        get => GetOrDefault<int>(nameof(HoneypotChance));
-        set { _cache[nameof(HoneypotChance)] = value; }
+        File.Move(tempPath, ConfigPath, overwrite: true);
     }
 }

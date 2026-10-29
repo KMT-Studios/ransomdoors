@@ -1,49 +1,63 @@
-﻿using System.IO;
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Media;
 
-namespace rans0m
+namespace rans0m;
+
+public partial class TauntWindow : Window
 {
-    public partial class TauntWindow : Window
+    private readonly GlitchIdle _glitchIdle;
+    private bool _closed;
+
+    public TauntWindow()
     {
-        private bool _closed = false;
+        InitializeComponent();
 
-        public TauntWindow()
+        _glitchIdle = new GlitchIdle(this);
+        Closed += (_, _) =>
         {
-            InitializeComponent();
-            Closed += (_, _) => _closed = true;
+            _closed = true;
+            _glitchIdle.Dispose();
+        };
+    }
+
+    private void Window_Loaded(object sender, RoutedEventArgs e)
+    {
+        Global.HideSystemMenu(this);
+
+        _ = PlayTauntSpawnSoundAsync();
+
+        Title = Global.Rng.Pick(TauntAssets.Titles);
+        Background = new ImageBrush(Global.Rng.Pick(TauntAssets.TauntImages));
+        Width = Global.Rng.Next(200, 400);
+        Height = Global.Rng.Next(200, 400);
+
+        Global.RandomPosWindow(this);
+
+        _glitchIdle.Reanchor();
+        _glitchIdle.Start();
+
+        _ = CloseAfterDelayAsync();
+    }
+
+    private static async Task PlayTauntSpawnSoundAsync()
+    {
+        using System.IO.Stream stream = Global.GetResourceStream("Sounds/tauntSpawn.wav");
+        SoundHelper.Create(stream).Play();
+    }
+
+    private async Task CloseAfterDelayAsync()
+    {
+        await Task.Delay(Global.Rng.Next(4000, 10 * 1000));
+
+        // The reset sweep may have already closed this while the timer was counting down.
+        if (_closed)
+        {
+            return;
         }
 
-        private void Window_Loaded(object sender, RoutedEventArgs e)
-        {
-            Global.HideSystemMenu(this);
+        using System.IO.Stream stream = Global.GetResourceStream("Sounds/tauntLeave.wav");
+        SoundHelper.Create(stream).Play();
 
-            Stream tauntSpawnStream = Global.GetResourceSteam("Sounds/tauntSpawn.wav");
-            _ = Task.Run(() => SoundHandle.Create(tauntSpawnStream).Play());
-
-            // Sets random window title, image and size
-            Title = Global.tauntTitles[Global.rng.Next(Global.tauntTitles.Count)];
-            Background = new ImageBrush(Global.tauntImages[Global.rng.Next(Global.tauntImages.Count)]);
-            Width = Global.rng.Next(200, 400);
-            Height = Global.rng.Next(200, 400);
-
-            // Random pos
-            Global.RandomPosWindow(this);
-
-            // Glitch Idle Effect
-            Global.GlitchIdle(this);
-
-            // Closes after 4-10 seconds
-            _ = CloseAfterDelayAsync();
-        }
-
-        private async Task CloseAfterDelayAsync()
-        {
-            await Task.Delay(Global.rng.Next(4000, 10 * 1000));
-            // ResetRansom's cleanup sweep may have already closed this while the timer was counting down
-            if (_closed) return;
-            SoundHandle.Create(Global.GetResourceSteam("Sounds/tauntLeave.wav")).Play();
-            Close();
-        }
+        Close();
     }
 }

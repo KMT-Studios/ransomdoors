@@ -2,131 +2,195 @@
 using System.Windows;
 using System.Windows.Threading;
 
-namespace rans0m
+namespace rans0m;
+
+public partial class RansomNotification : Window
 {
-    public partial class RansomNotification : Window
+    private readonly DispatcherTimer _timer;
+    private readonly GlitchIdle _glitchIdle;
+    private TopMostEnforcer? _topMostEnforcer;
+    private int _knownTimeLeft = -1;
+
+    public RansomNotification()
     {
-        private DispatcherTimer _timer;
+        InitializeComponent();
 
-        public RansomNotification()
+        _timer = new DispatcherTimer(DispatcherPriority.Normal, Dispatcher)
         {
-            InitializeComponent();
+            Interval = TimeSpan.FromSeconds(1),
+        };
+        _timer.Tick += OnTimerTick;
 
-            _timer = new DispatcherTimer
-            {
-                Interval = TimeSpan.FromSeconds(1)
-            };
-            _timer.Tick += Timer_Tick;
-            _timer.Start();
+        _glitchIdle = new GlitchIdle(this, spawnTaunts: true);
+    }
 
-            Closed += (_, _) => _timer.Stop();
+    private void Window_Loaded(object sender, RoutedEventArgs e)
+    {
+        Global.HideSystemMenu(this);
+
+        UpdateCountdown(Global.State.RansomTimeLeft);
+
+        Global.RandomPosWindow(this);
+
+        // The ransom window is what the user has to interact with, so it owns the front of the
+        // z-order and re-asserts it far more aggressively than the overlay does.
+        _topMostEnforcer = new TopMostEnforcer(this, TimeSpan.FromMilliseconds(250));
+        _topMostEnforcer.Start();
+
+        // Taunt windows are normal-top windows so the ransom stays readable on top of them.
+        for (int i = 0; i < 9; i++)
+        {
+            new TauntWindow().Show();
         }
 
-        private void Window_Loaded(object sender, RoutedEventArgs e)
+        _glitchIdle.Start();
+        _timer.Start();
+    }
+
+    private void OnClosing(object? sender, System.ComponentModel.CancelEventArgs e)
+    {
+        _timer.Stop();
+        _glitchIdle.Dispose();
+    }
+
+    private void OnTimerTick(object? sender, EventArgs e)
+    {
+        txt_ransomLeft.Text = Global.State.RansomLeft.ToString();
+
+        UpdateCountdown(Global.State.RansomTimeLeft);
+    }
+
+    /// <summary>
+    /// Formats the countdown, skipping the refresh when the value has not changed so the label
+    /// does not flicker once a second as its width is recomputed.
+    /// </summary>
+    private void UpdateCountdown(int secondsLeft)
+    {
+        if (secondsLeft == _knownTimeLeft)
         {
-            Global.HideSystemMenu(this);
-
-            // Init the window
-            txt_timer.Text = $"TIME: {Global.ransomTimeLeft / 60:D2}:{Global.ransomTimeLeft % 60:D2}";
-            Global.RandomPosWindow(this);
-
-            // Init 9 taunt windows
-            for (int i = 0; i < 9; i++)
-            {
-                TauntWindow tauntWindow = new TauntWindow();
-                tauntWindow.Show();
-            }
-
-            Global.GlitchIdle(this, true);
+            return;
         }
 
-        private void Timer_Tick(object sender, EventArgs e)
+        _knownTimeLeft = secondsLeft;
+        txt_timer.Text = $"TIME: {secondsLeft / 60:D2}:{secondsLeft % 60:D2}";
+    }
+
+    private void Window_DragEnter(object sender, DragEventArgs e)
+    {
+        if (e.Data.GetDataPresent(DataFormats.FileDrop))
         {
-            txt_ransomLeft.Text = Global.ransomLeft.ToString();
-            txt_timer.Text = $"TIME: {Global.ransomTimeLeft / 60:D2}:{Global.ransomTimeLeft % 60:D2}";
+            e.Effects = DragDropEffects.Link;
+        }
+    }
+
+    private void Window_Drop(object sender, DragEventArgs e)
+    {
+        if (e.Data.GetData(DataFormats.FileDrop) is not string[] files)
+        {
+            return;
         }
 
-        private void Window_DragEnter(object sender, DragEventArgs e)
+        bool sfxPlayed = false;
+
+        foreach (string file in files)
         {
-            if (e.Data.GetDataPresent(DataFormats.FileDrop))
+            string extension = Path.GetExtension(file);
+
+            if (extension.StartsWith(".gold", StringComparison.OrdinalIgnoreCase))
             {
-                // TODO : Check if file is a valid .gold file
-                e.Effects = DragDropEffects.Link;
+                RedeemCoin(file, extension, ref sfxPlayed);
+            }
+            else if (extension.Equals(".crucifix", StringComparison.OrdinalIgnoreCase))
+            {
+                RedeemCrucifix(file);
             }
         }
 
-        private void Window_Drop(object sender, DragEventArgs e)
+        if (Global.State.RansomLeft <= 0)
         {
-            string[] files = (string[])e.Data.GetData(DataFormats.FileDrop);
+            Global.State.UnderRansom = false;
 
-            bool sfxPlayed = false; // Prevent multiple sfx to play when user drags multiple coins
-            foreach (string file in files) // technically it's easily cheat but who cares
+            if (Global.State.CrucifixUsed)
             {
-                string extension = Path.GetExtension(file);
-
-                if (extension.StartsWith(".gold"))
-                {
-                    try
-                    {
-                        int goldType = Int32.Parse(extension.Replace(".gold", ""));
-                        Dictionary<string, string> goldFileData = GoldCoinManager.DecryptCoinFile(file);
-
-                        if (goldFileData == null || !goldFileData.TryGetValue("RANSOM_COIN", out string coinId))
-                            continue; // Corrupt/foreign file
-
-                        if (!Global.usedCoins.Contains(coinId)) // If coin hasn't been used yet (to prevent peoples from just copy pasting coins
-                        {
-                            if (!sfxPlayed)
-                            {
-                                // Use the coin
-                                SoundHandle cashSfx = SoundHandle.Create(Global.GetResourceSteam("Sounds/cash.wav")); // Need to replace the sfx it's kinda trash
-                                cashSfx.Play();
-                                sfxPlayed = true;
-                            }
-
-                            Global.usedCoins.Add(coinId);
-                            Global.ransomLeft -= CoinValues.ExtensionValues[goldType];
-
-                            File.Delete(file);
-                        }
-                    }
-                    catch { }
-
-                }
-                else if (extension == ".crucifix")
-                {
-                    try
-                    {
-                        Dictionary<string, string> crucifixData = GoldCoinManager.DecryptCoinFile(file);
-
-                        if (crucifixData == null || !crucifixData.TryGetValue("RANSOM_COIN", out string coinId))
-                            continue; // Corrupt/foreign file
-
-                        if (!Global.usedCoins.Contains(coinId))
-                        {
-                            Global.usedCoins.Add(coinId);
-                            File.Delete(file);
-
-                            Global.crucifixUsed = true;
-                            Global.ransomLeft = 0;
-                        }
-                    }
-                    catch { }
-                }
+                new CrucifixWindow(Left, Top).Show();
+            }
+            else
+            {
+                new ThankYou(Left, Top).Show();
             }
 
-            if (Global.ransomLeft <= 0)
-            {
-                Global.underRansom = false;
+            Close();
+        }
+    }
 
-                if (Global.crucifixUsed)
-                    new CrucifixWindow(this.Left, this.Top).Show();
-                else
-                    new ThankYou(this.Left, this.Top).Show();
+    private void RedeemCoin(string file, string extension, ref bool sfxPlayed)
+    {
+        if (!int.TryParse(extension.Replace(".gold", "", StringComparison.OrdinalIgnoreCase), out int goldType))
+        {
+            return;
+        }
 
-                Close();
-            }
+        // Rejects corrupt or foreign files, and any coin already spent this encounter.
+        if (!TryClaimCoin(file))
+        {
+            return;
+        }
 
+        if (!sfxPlayed)
+        {
+            sfxPlayed = true;
+            SoundHelper.Create(Global.GetResourceStream("Sounds/cash.wav")).Play();
+        }
+
+        Global.State.RansomLeft -= CoinValues.GetValue(goldType);
+
+        TryDelete(file);
+    }
+
+    private void RedeemCrucifix(string file)
+    {
+        if (!TryClaimCoin(file))
+        {
+            return;
+        }
+
+        TryDelete(file);
+
+        Global.State.CrucifixUsed = true;
+        Global.State.RansomLeft = 0;
+    }
+
+    /// <summary>
+    /// Decrypts a dropped marker file and marks its id as spent. Returns false for files that
+    /// were not created by this app or that have already been paid in.
+    /// </summary>
+    private static bool TryClaimCoin(string file)
+    {
+        Dictionary<string, string>? data = GoldCoinManager.DecryptCoinFile(file);
+
+        if (data is null || !data.TryGetValue("RANSOM_COIN", out string? coinId) || coinId is null)
+        {
+            return false;
+        }
+
+        return Global.State.TrySpendCoin(coinId);
+    }
+
+    /// <summary>
+    /// Best-effort delete. A locked or already-removed file must not stop the ransom from
+    /// being paid off.
+    /// </summary>
+    private static void TryDelete(string file)
+    {
+        try
+        {
+            File.Delete(file);
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
         }
     }
 }

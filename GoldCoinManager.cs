@@ -1,4 +1,5 @@
-﻿using System.IO;
+using System.Diagnostics;
+using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -20,7 +21,7 @@ namespace rans0m
 
         public static int GetWeightedExtension()
         {
-            int roll = Global.rng.Next(100);
+            int roll = Global.Rng.Next(100);
             return roll switch
             {
                 < 40 => 1,  // 40% chance
@@ -52,13 +53,20 @@ namespace rans0m
         };
 
         public static string temporaryFolderPath = Path.Combine(Path.GetTempPath(), "RansomDrawers");
+        private const double CrucifixSpawnChance = 0.1;
+        private const double Gold6SpawnChance = 0.3;
+
+        // The drawer root actually used by the current run. Normally the shared temporaryFolderPath,
+        // but a stale folder can be locked by a file manager, in which case we fall back to a
+        // uniquely named root so a leftover handle cannot abort coin generation.
+        private static string activeDrawerRoot = temporaryFolderPath;
 
         /// <summary>
         /// Generate coins, chooses method based on config
         /// </summary>
         public static int GenerateCoins()
         {
-            return Config.UseDrawerMode ? GenerateFolderDrawerCoins() : GenerateScatteredCoins();
+            return Config.Current.UseDrawerMode ? GenerateFolderDrawerCoins() : GenerateScatteredCoins();
         }
 
         // ----------------- SCATTERED MODE -----------------
@@ -68,7 +76,7 @@ namespace rans0m
         /// </summary>
         private static int GenerateScatteredCoins()
         {
-            int targetGold = (int)(Config.RansomAmount * 1.2);
+            int targetGold = (int)(Config.Current.RansomAmount * 1.2);
             int generatedGold = 0;
             List<string> createdPaths = new List<string>();
             HashSet<string> touchedDirs = new HashSet<string>();
@@ -81,7 +89,7 @@ namespace rans0m
                 attempts++;
                 try
                 {
-                    string baseDir = targetFolders[Global.rng.Next(targetFolders.Count)];
+                    string baseDir = targetFolders[Global.Rng.Next(targetFolders.Count)];
                     if (!Directory.Exists(baseDir)) continue;
 
                     string targetDir = GetRandomLocationInTree(baseDir);
@@ -94,8 +102,7 @@ namespace rans0m
                     int extension = CoinValues.GetWeightedExtension(); // 1-5 only
                     int coinValue = CoinValues.GetValue(extension);
 
-                    string coinFile = CreateCoinFile(targetDir, extension);
-                    if (coinFile != null)
+                    if (CreateCoinFile(targetDir, extension) is { } coinFile)
                     {
                         createdPaths.Add(coinFile);
                         generatedGold += coinValue;
@@ -105,11 +112,11 @@ namespace rans0m
             }
 
             // Honeypot
-            if (Global.rng.NextDouble() < Config.HoneypotChance/100.0)
+            if (Global.Rng.NextDouble() < Gold6SpawnChance)
             {
                 try
                 {
-                    string baseDir = targetFolders[Global.rng.Next(targetFolders.Count)];
+                    string baseDir = targetFolders[Global.Rng.Next(targetFolders.Count)];
                     if (Directory.Exists(baseDir))
                     {
                         string targetDir = GetRandomLocationInTree(baseDir);
@@ -117,8 +124,7 @@ namespace rans0m
                         if (!targetFolders.Contains(targetDir, StringComparer.OrdinalIgnoreCase))
                             touchedDirs.Add(targetDir);
 
-                        string coinFile = CreateCoinFile(targetDir, 6);
-                        if (coinFile != null)
+                        if (CreateCoinFile(targetDir, 6) is { } coinFile)
                             createdPaths.Add(coinFile);
                     }
                 }
@@ -126,11 +132,11 @@ namespace rans0m
             }
 
             // Crucifix
-            if (Global.rng.NextDouble() < Config.CrucChance/100.0)
+            if (Global.Rng.NextDouble() < CrucifixSpawnChance)
             {
                 try
                 {
-                    string baseDir = targetFolders[Global.rng.Next(targetFolders.Count)];
+                    string baseDir = targetFolders[Global.Rng.Next(targetFolders.Count)];
                     if (Directory.Exists(baseDir))
                     {
                         string targetDir = GetRandomLocationInTree(baseDir);
@@ -138,8 +144,7 @@ namespace rans0m
                         if (!targetFolders.Contains(targetDir, StringComparer.OrdinalIgnoreCase))
                             touchedDirs.Add(targetDir);
 
-                        string crucifixFile = CreateCrucifixFile(targetDir);
-                        if (crucifixFile != null)
+                        if (CreateCrucifixFile(targetDir) is { } crucifixFile)
                             createdPaths.Add(crucifixFile);
                     }
                 }
@@ -151,13 +156,13 @@ namespace rans0m
             return generatedGold;
         }
 
-        private static int GetBalancedMaxSubfolderDepth() => Math.Clamp(2 + Config.InfectionDuration / 45, 2, 8);
+        private static int GetBalancedMaxSubfolderDepth() => Math.Clamp(2 + Config.Current.InfectionDuration / 45, 2, 8);
 
         /// <returns>A random location in the folder tree, starting from the root</returns>
         private static string GetRandomLocationInTree(string root)
         {
             List<string> chain = new List<string> { root };
-            int depth = Global.rng.Next(GetBalancedMaxSubfolderDepth() + 1);
+            int depth = Global.Rng.Next(GetBalancedMaxSubfolderDepth() + 1);
 
             string current = root;
             for (int i = 0; i < depth; i++)
@@ -166,13 +171,13 @@ namespace rans0m
                 {
                     string[] subDirs = Directory.GetDirectories(current);
                     if (subDirs.Length == 0) break;
-                    current = subDirs[Global.rng.Next(subDirs.Length)];
+                    current = subDirs[Global.Rng.Next(subDirs.Length)];
                     chain.Add(current);
                 }
                 catch { break; }
             }
 
-            return chain[Global.rng.Next(chain.Count)];
+            return chain[Global.Rng.Next(chain.Count)];
         }
 
         // ---------------- FOLDER DRAWER MODE ----------------
@@ -182,10 +187,10 @@ namespace rans0m
 
         private static (int drawerCount, int itemsPerDrawer) GetBalancedDrawerLayout()
         {
-            int targetGold = (int)(Config.RansomAmount * 1.2);
+            int targetGold = (int)(Config.Current.RansomAmount * 1.2);
 
             int slotsForGold = (int)Math.Ceiling(targetGold / AverageCoinValue * 1.5);
-            int slotsForDuration = Config.InfectionDuration / 2;
+            int slotsForDuration = Config.Current.InfectionDuration / 2;
 
             int totalSlots = Math.Max(slotsForGold, slotsForDuration);
 
@@ -198,14 +203,14 @@ namespace rans0m
         private static string GenerateRandomFolderName() => Guid.NewGuid().ToString("N").Substring(0, 8);
 
         /// <summary>
-        /// Creates a temporary folder structure
+        /// Clears out any drawers left by a previous run and returns the folder to build this run in.
+        /// A leftover Explorer or file-manager window can keep the shared root locked, which used to
+        /// make the recursive delete throw and abort generation with zero coins, so a locked root is
+        /// abandoned in favour of a uniquely named one rather than failing the encounter.
         /// </summary>
-        private static int GenerateFolderDrawerCoins()
+        private static string PrepareDrawerRoot()
         {
-            int targetGold = (int)(Config.RansomAmount * 1.2);
-            int generatedGold = 0;
-            List<string> createdPaths = new List<string>();
-            List<string> allDirs = new List<string>(); // Every drawer/item/subfolder dir made this pass
+            CloseDrawerExplorerWindow();
 
             try
             {
@@ -213,13 +218,40 @@ namespace rans0m
                     Directory.Delete(temporaryFolderPath, true);
 
                 Directory.CreateDirectory(temporaryFolderPath);
+                activeDrawerRoot = temporaryFolderPath;
+                return activeDrawerRoot;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                Debug.WriteLine($"[GoldCoinManager] Could not reuse drawer root: {ex.Message}");
+            }
+
+            string fallback = Path.Combine(Path.GetTempPath(), $"RansomDrawers-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(fallback);
+            activeDrawerRoot = fallback;
+            return activeDrawerRoot;
+        }
+
+        /// <summary>
+        /// Creates a temporary folder structure
+        /// </summary>
+        private static int GenerateFolderDrawerCoins()
+        {
+            int targetGold = (int)(Config.Current.RansomAmount * 1.2);
+            int generatedGold = 0;
+            List<string> createdPaths = new List<string>();
+            List<string> allDirs = new List<string>(); // Every drawer/item/subfolder dir made this pass
+
+            try
+            {
+                string drawerRoot = PrepareDrawerRoot();
 
                 (int drawerCount, int itemsPerDrawer) = GetBalancedDrawerLayout();
 
                 // Coins and drawers
                 for (int drawer = 0; drawer < drawerCount && generatedGold < targetGold; drawer++)
                 {
-                    string drawerPath = Path.Combine(temporaryFolderPath, GenerateRandomFolderName());
+                    string drawerPath = Path.Combine(drawerRoot, GenerateRandomFolderName());
                     Directory.CreateDirectory(drawerPath);
                     allDirs.Add(drawerPath);
 
@@ -231,7 +263,7 @@ namespace rans0m
                         List<string> pathLevels = new List<string> { drawerPath, itemPath };
 
                         // Randomly add more nesting (50% chance)
-                        if (Global.rng.Next(100) < 50)
+                        if (Global.Rng.Next(100) < 50)
                         {
                             string subfolderPath = Path.Combine(itemPath, GenerateRandomFolderName());
                             Directory.CreateDirectory(subfolderPath);
@@ -240,13 +272,12 @@ namespace rans0m
 
                         allDirs.AddRange(pathLevels.Skip(1)); // drawerPath already added above
 
-                        string coinDir = pathLevels[Global.rng.Next(pathLevels.Count)];
+                        string coinDir = pathLevels[Global.Rng.Next(pathLevels.Count)];
 
                         int extension = CoinValues.GetWeightedExtension();
                         int coinValue = CoinValues.GetValue(extension);
 
-                        string coinFile = CreateCoinFile(coinDir, extension);
-                        if (coinFile != null)
+                        if (CreateCoinFile(coinDir, extension) is { } coinFile)
                         {
                             createdPaths.Add(coinFile);
                             generatedGold += coinValue;
@@ -255,26 +286,24 @@ namespace rans0m
                 }
 
                 // Honeypot
-                if (allDirs.Count > 0 && Global.rng.NextDouble() < Config.HoneypotChance / 100.0)
+                if (allDirs.Count > 0 && Global.Rng.NextDouble() < Gold6SpawnChance)
                 {
                     try
                     {
-                        string dir = allDirs[Global.rng.Next(allDirs.Count)];
-                        string coinFile = CreateCoinFile(dir, 6);
-                        if (coinFile != null)
+                        string dir = allDirs[Global.Rng.Next(allDirs.Count)];
+                        if (CreateCoinFile(dir, 6) is { } coinFile)
                             createdPaths.Add(coinFile);
                     }
                     catch { }
                 }
 
                 // Crucifix
-                if (allDirs.Count > 0 && Global.rng.NextDouble() < Config.CrucChance / 100.0)
+                if (allDirs.Count > 0 && Global.Rng.NextDouble() < CrucifixSpawnChance)
                 {
                     try
                     {
-                        string dir = allDirs[Global.rng.Next(allDirs.Count)];
-                        string crucifixFile = CreateCrucifixFile(dir);
-                        if (crucifixFile != null)
+                        string dir = allDirs[Global.Rng.Next(allDirs.Count)];
+                        if (CreateCrucifixFile(dir) is { } crucifixFile)
                             createdPaths.Add(crucifixFile);
                     }
                     catch { }
@@ -282,9 +311,12 @@ namespace rans0m
 
                 AppendToRegistry(createdPaths);
 
-                System.Diagnostics.Process.Start("explorer.exe", temporaryFolderPath);
+                System.Diagnostics.Process.Start("explorer.exe", activeDrawerRoot);
             }
-            catch { }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[GoldCoinManager] Drawer generation failed: {ex}");
+            }
 
             return generatedGold;
         }
@@ -294,30 +326,57 @@ namespace rans0m
         /// </summary>
         private static void CloseDrawerExplorerWindow()
         {
-            Thread thread = new Thread(() =>
+            try
             {
-                try
+                Thread thread = new Thread(() =>
                 {
-                    dynamic shell = Activator.CreateInstance(Type.GetTypeFromProgID("Shell.Application"));
-                    foreach (dynamic window in shell.Windows())
+                    try
                     {
-                        try
+                        Type? shellType = Type.GetTypeFromProgID("Shell.Application");
+                        if (shellType is null)
                         {
-                            string url = window.LocationURL as string;
-                            if (string.IsNullOrEmpty(url)) continue;
-
-                            string path = Uri.UnescapeDataString(new Uri(url).LocalPath);
-                            if (path.StartsWith(temporaryFolderPath, StringComparison.OrdinalIgnoreCase))
-                                window.Quit();
+                            return;
                         }
-                        catch { }
+
+                        dynamic? shell = Activator.CreateInstance(shellType);
+                        if (shell is null)
+                        {
+                            return;
+                        }
+
+                        foreach (dynamic window in shell.Windows())
+                        {
+                            try
+                            {
+                                string? url = window.LocationURL as string;
+                                if (string.IsNullOrWhiteSpace(url))
+                                {
+                                    continue;
+                                }
+
+                                string path = Uri.UnescapeDataString(new Uri(url).LocalPath);
+                                if (path.StartsWith(activeDrawerRoot, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    window.Quit();
+                                }
+                            }
+                            catch
+                            {
+                            }
+                        }
                     }
-                }
-                catch { }
-            });
-            thread.SetApartmentState(ApartmentState.STA);
-            thread.Start();
-            thread.Join(2000); // Don't let cleanup hang indefinitely if this ever misbehaves
+                    catch
+                    {
+                    }
+                });
+
+                thread.SetApartmentState(ApartmentState.STA);
+                thread.Start();
+                thread.Join(2000);
+            }
+            catch
+            {
+            }
         }
 
         // ------------------- COMMON HELPERS -------------------
@@ -415,16 +474,26 @@ namespace rans0m
             }
 
             // Close any Explorer window drawer mode opened for the temp folder before deleting it.
-            if (Config.UseDrawerMode)
+            if (Config.Current.UseDrawerMode)
                 CloseDrawerExplorerWindow();
 
-            // Clean up temporary folder if using drawer mode
-            try
+            // Clean up the folder drawer mode built this run. It may be the shared root or a
+            // uniquely named fallback, and it may be held open by another app, so this is best
+            // effort: a locked folder only lingers until the holding process exits.
+            foreach (string root in new[] { activeDrawerRoot, temporaryFolderPath })
             {
-                if (Directory.Exists(temporaryFolderPath))
-                    Directory.Delete(temporaryFolderPath, true);
+                try
+                {
+                    if (Directory.Exists(root))
+                        Directory.Delete(root, true);
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"[GoldCoinManager] Could not delete drawer root {root}: {ex.Message}");
+                }
             }
-            catch { }
+
+            activeDrawerRoot = temporaryFolderPath;
 
             // Clear registry
             try
@@ -451,7 +520,7 @@ namespace rans0m
         {
             try
             {
-                using (RegistryKey key = Registry.CurrentUser.OpenSubKey(RegistryPath))
+                using (RegistryKey? key = Registry.CurrentUser.OpenSubKey(RegistryPath))
                 {
                     object? value = key?.GetValue(RegistryValueName);
                     return value is string[] arr ? new List<string>(arr) : null;
@@ -464,7 +533,7 @@ namespace rans0m
         {
             try
             {
-                using (RegistryKey key = Registry.CurrentUser.CreateSubKey(RegistryPath))
+                using (RegistryKey? key = Registry.CurrentUser.CreateSubKey(RegistryPath))
                 {
                     key?.SetValue(RegistryValueName, paths.ToArray(), RegistryValueKind.MultiString);
                 }
@@ -483,7 +552,7 @@ namespace rans0m
         {
             try
             {
-                using (RegistryKey key = Registry.CurrentUser.OpenSubKey(RegistryPath))
+                using (RegistryKey? key = Registry.CurrentUser.OpenSubKey(RegistryPath))
                 {
                     object? value = key?.GetValue(DirRegistryValueName);
                     return value is string[] arr ? new List<string>(arr) : null;
@@ -496,7 +565,7 @@ namespace rans0m
         {
             try
             {
-                using (RegistryKey key = Registry.CurrentUser.CreateSubKey(RegistryPath))
+                using (RegistryKey? key = Registry.CurrentUser.CreateSubKey(RegistryPath))
                 {
                     key?.SetValue(DirRegistryValueName, dirs.ToArray(), RegistryValueKind.MultiString);
                 }
